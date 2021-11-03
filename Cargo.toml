@@ -1,7 +1,7 @@
 [package]
-name = "{{project-name}}"
+name = "terra_rps"
 version = "0.1.0"
-authors = ["{{authors}}"]
+authors = ["Josh Mayr"]
 edition = "2018"
 
 exclude = [

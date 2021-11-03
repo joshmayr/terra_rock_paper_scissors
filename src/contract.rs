@@ -1,6 +1,6 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cosmwasm_std::{to_binary, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
 use cw2::set_contract_version;
 
 use crate::error::ContractError;
@@ -41,6 +41,7 @@ pub fn execute(
     match msg {
         ExecuteMsg::Increment {} => try_increment(deps),
         ExecuteMsg::Reset { count } => try_reset(deps, info, count),
+        ExecuteMsg::StartGame { addr } => try_start_game(deps, info, addr),
     }
 }
 
@@ -61,6 +62,15 @@ pub fn try_reset(deps: DepsMut, info: MessageInfo, count: i32) -> Result<Respons
         Ok(state)
     })?;
     Ok(Response::new().add_attribute("method", "reset"))
+}
+pub fn try_start_game(
+    deps: DepsMut,
+    _info: MessageInfo,
+    addr: String,
+) -> Result<Response, ContractError> {
+    let _checked: Addr = deps.api.addr_validate(&addr)?;
+
+    Ok(Response::new().add_attribute("method", "start_game"))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -143,5 +153,24 @@ mod tests {
         let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
         let value: CountResponse = from_binary(&res).unwrap();
         assert_eq!(5, value.count);
+    }
+
+    #[test]
+    fn invalid_address() {
+        let mut deps = mock_dependencies(&coins(2, "token"));
+
+        let msg = InstantiateMsg { count: 4 };
+        let info = mock_info("creator", &coins(2, "token"));
+        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        let start_info = mock_info("creator", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: String::from("not_a_real_address&DFOUSHDOFUGSDOUFGSDOUGDGSGDFO7d9fgas"),
+        };
+        let res = execute(deps.as_mut(), mock_env(), start_info, msg);
+        match res {
+            Err(ContractError) => {}
+            _ => panic!("Must return ContractError"),
+        }
     }
 }

@@ -351,20 +351,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "project-name"
-version = "0.1.0"
-dependencies = [
-  "cosmwasm-schema",
-  "cosmwasm-std",
-  "cosmwasm-storage",
-  "cw-storage-plus",
-  "cw2",
-  "schemars",
-  "serde",
-  "thiserror",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -525,6 +511,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-xid",
+]
+
+[[package]]
+name = "terra_rps"
+version = "0.1.0"
+dependencies = [
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cosmwasm-storage",
+ "cw-storage-plus",
+ "cw2",
+ "schemars",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
