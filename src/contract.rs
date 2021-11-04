@@ -4,8 +4,8 @@ use cosmwasm_std::{to_binary, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Res
 use cw2::set_contract_version;
 
 use crate::error::ContractError;
-use crate::msg::{CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{State, STATE};
+use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::state::{Data, GameMove, GameResult, GAMES};
 
 // version info for migration info
 const CONTRACT_NAME: &str = "crates.io:{{project-name}}";
@@ -18,17 +18,11 @@ pub fn instantiate(
     info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
-    let state = State {
-        count: msg.count,
-        owner: info.sender.clone(),
-    };
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
-    STATE.save(deps.storage, &state)?;
 
     Ok(Response::new()
         .add_attribute("method", "instantiate")
-        .add_attribute("owner", info.sender)
-        .add_attribute("count", msg.count.to_string()))
+        .add_attribute("owner", info.sender))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -39,50 +33,39 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Increment {} => try_increment(deps),
-        ExecuteMsg::Reset { count } => try_reset(deps, info, count),
-        ExecuteMsg::StartGame { addr } => try_start_game(deps, info, addr),
+        ExecuteMsg::StartGame { addr, first_move } => try_start_game(deps, info, addr, first_move),
     }
 }
 
-pub fn try_increment(deps: DepsMut) -> Result<Response, ContractError> {
-    STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-        state.count += 1;
-        Ok(state)
-    })?;
-
-    Ok(Response::new().add_attribute("method", "try_increment"))
-}
-pub fn try_reset(deps: DepsMut, info: MessageInfo, count: i32) -> Result<Response, ContractError> {
-    STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-        if info.sender != state.owner {
-            return Err(ContractError::Unauthorized {});
-        }
-        state.count = count;
-        Ok(state)
-    })?;
-    Ok(Response::new().add_attribute("method", "reset"))
-}
 pub fn try_start_game(
     deps: DepsMut,
-    _info: MessageInfo,
+    info: MessageInfo,
     addr: String,
+    first_move: GameMove,
 ) -> Result<Response, ContractError> {
-    let _checked: Addr = deps.api.addr_validate(&addr)?;
+    let host = info.sender;
+    let checked: Addr = deps.api.addr_validate(&addr)?;
+
+    let empty_check = GAMES.may_load(deps.storage, &host)?;
+
+    if empty_check != None {
+        return Err(ContractError::GameInProgress);
+    }
+
+    let game_data = Data {
+        opponent: checked,
+        host_move: first_move,
+        opponent_move: GameMove::NoMove,
+        result: GameResult::Started,
+    };
+    GAMES.save(deps.storage, &host, &game_data)?;
 
     Ok(Response::new().add_attribute("method", "start_game"))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
-    match msg {
-        QueryMsg::GetCount {} => to_binary(&query_count(deps)?),
-    }
-}
-
-fn query_count(deps: Deps) -> StdResult<CountResponse> {
-    let state = STATE.load(deps.storage)?;
-    Ok(CountResponse { count: state.count })
+    match msg {}
 }
 
 #[cfg(test)]
@@ -95,82 +78,71 @@ mod tests {
     fn proper_initialization() {
         let mut deps = mock_dependencies(&[]);
 
-        let msg = InstantiateMsg { count: 17 };
+        let msg = InstantiateMsg {};
         let info = mock_info("creator", &coins(1000, "earth"));
 
         // we can just call .unwrap() to assert this was a success
         let res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
         assert_eq!(0, res.messages.len());
-
-        // it worked, let's query the state
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(17, value.count);
-    }
-
-    #[test]
-    fn increment() {
-        let mut deps = mock_dependencies(&coins(2, "token"));
-
-        let msg = InstantiateMsg { count: 17 };
-        let info = mock_info("creator", &coins(2, "token"));
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-        // beneficiary can release it
-        let info = mock_info("anyone", &coins(2, "token"));
-        let msg = ExecuteMsg::Increment {};
-        let _res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-        // should increase counter by 1
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(18, value.count);
-    }
-
-    #[test]
-    fn reset() {
-        let mut deps = mock_dependencies(&coins(2, "token"));
-
-        let msg = InstantiateMsg { count: 17 };
-        let info = mock_info("creator", &coins(2, "token"));
-        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-        // beneficiary can release it
-        let unauth_info = mock_info("anyone", &coins(2, "token"));
-        let msg = ExecuteMsg::Reset { count: 5 };
-        let res = execute(deps.as_mut(), mock_env(), unauth_info, msg);
-        match res {
-            Err(ContractError::Unauthorized {}) => {}
-            _ => panic!("Must return unauthorized error"),
-        }
-
-        // only the original creator can reset the counter
-        let auth_info = mock_info("creator", &coins(2, "token"));
-        let msg = ExecuteMsg::Reset { count: 5 };
-        let _res = execute(deps.as_mut(), mock_env(), auth_info, msg).unwrap();
-
-        // should now be 5
-        let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-        let value: CountResponse = from_binary(&res).unwrap();
-        assert_eq!(5, value.count);
     }
 
     #[test]
     fn invalid_address() {
         let mut deps = mock_dependencies(&coins(2, "token"));
 
-        let msg = InstantiateMsg { count: 4 };
+        let msg = InstantiateMsg {};
         let info = mock_info("creator", &coins(2, "token"));
         let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
 
         let start_info = mock_info("creator", &coins(2, "token"));
         let msg = ExecuteMsg::StartGame {
             addr: String::from("not_a_real_address&DFOUSHDOFUGSDOUFGSDOUGDGSGDFO7d9fgas"),
+            first_move: GameMove::Rock,
         };
         let res = execute(deps.as_mut(), mock_env(), start_info, msg);
         match res {
             Err(ContractError) => {}
             _ => panic!("Must return ContractError"),
+        }
+    }
+
+    #[test]
+    fn start_multiple_games() {
+        let mut deps = mock_dependencies(&coins(2, "token"));
+
+        let msg = InstantiateMsg {};
+        let info = mock_info("creator", &coins(2, "token"));
+        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Start first game
+        let start_info = mock_info("creator", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: String::from("an_opponent"),
+            first_move: GameMove::Scissors,
+        };
+        let _res = execute(deps.as_mut(), mock_env(), start_info, msg);
+
+        let same_start_info = mock_info("creator", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: String::from("different_opponent"),
+            first_move: GameMove::Scissors,
+        };
+        let res = execute(deps.as_mut(), mock_env(), same_start_info, msg);
+        match res {
+            Err(ContractError::GameInProgress) => {}
+            _ => panic!("Must return ContractError::GameInProgress"),
+        }
+
+        // Start a new game from different address
+        let diff_start_info = mock_info("someone_else", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: String::from("an_opponent"),
+            first_move: GameMove::Scissors,
+        };
+        let res = execute(deps.as_mut(), mock_env(), diff_start_info, msg);
+        match res {
+            Err(ContractError::GameInProgress) => panic!("Should let second game start"),
+            _ => {}
         }
     }
 }

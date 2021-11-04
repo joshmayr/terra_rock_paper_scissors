@@ -2,12 +2,30 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use cosmwasm_std::Addr;
-use cw_storage_plus::Item;
+use cw_storage_plus::Map;
+
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
-pub struct State {
-    pub count: i32,
-    pub owner: Addr,
+pub struct Data {
+    pub opponent: Addr,
+    pub host_move: GameMove,
+    pub opponent_move: GameMove,
+    pub result: GameResult,
 }
 
-pub const STATE: Item<State> = Item::new("state");
+pub const GAMES: Map<&Addr, Data> = Map::new("games");
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
+pub enum GameMove {
+    Rock,
+    Paper,
+    Scissors,
+    NoMove,
+}
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
+pub enum GameResult {
+    HostWins,
+    OpponentWins,
+    Tie,
+    Started,
+}

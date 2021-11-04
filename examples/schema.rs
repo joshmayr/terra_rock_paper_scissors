@@ -3,8 +3,8 @@ use std::fs::create_dir_all;
 
 use cosmwasm_schema::{export_schema, remove_schemas, schema_for};
 
-use terra_rps::msg::{CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
-use terra_rps::state::State;
+use terra_rps::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use terra_rps::state::Data;
 
 fn main() {
     let mut out_dir = current_dir().unwrap();
@@ -15,6 +15,5 @@ fn main() {
     export_schema(&schema_for!(InstantiateMsg), &out_dir);
     export_schema(&schema_for!(ExecuteMsg), &out_dir);
     export_schema(&schema_for!(QueryMsg), &out_dir);
-    export_schema(&schema_for!(State), &out_dir);
-    export_schema(&schema_for!(CountResponse), &out_dir);
+    export_schema(&schema_for!(Data), &out_dir);
 }
