@@ -1,10 +1,12 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
-use cosmwasm_std::{to_binary, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cosmwasm_std::{
+    to_binary, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Order, Response, StdResult,
+};
 use cw2::set_contract_version;
 
 use crate::error::ContractError;
-use crate::msg::{ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::msg::{ExecuteMsg, GamesResponse, InstantiateMsg, QueryMsg};
 use crate::state::{Data, GameMove, GameResult, GAMES};
 
 // version info for migration info
@@ -44,28 +46,50 @@ pub fn try_start_game(
     first_move: GameMove,
 ) -> Result<Response, ContractError> {
     let host = info.sender;
-    let checked: Addr = deps.api.addr_validate(&addr)?;
+    let opponent: Addr = deps.api.addr_validate(&addr)?;
 
-    let empty_check = GAMES.may_load(deps.storage, &host)?;
+    let empty_check = GAMES.may_load(deps.storage, (&host, &opponent))?;
 
     if empty_check != None {
         return Err(ContractError::GameInProgress);
     }
 
     let game_data = Data {
-        opponent: checked,
         host_move: first_move,
         opponent_move: GameMove::NoMove,
         result: GameResult::Started,
     };
-    GAMES.save(deps.storage, &host, &game_data)?;
+    GAMES.save(deps.storage, (&host, &opponent), &game_data)?;
 
     Ok(Response::new().add_attribute("method", "start_game"))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
-    match msg {}
+    match msg {
+        QueryMsg::QueryHostGames { addr } => to_binary(&query_host_games(deps, addr)?),
+        QueryMsg::QueryAllGames {} => to_binary(&query_all_games(deps)?),
+    }
+}
+
+pub fn query_host_games(deps: Deps, host_addr: String) -> StdResult<GamesResponse> {
+    let host_checked = deps.api.addr_validate(&host_addr)?;
+
+    // get all under one key
+    let all = GAMES
+        .prefix(&host_checked)
+        .range(deps.storage, None, None, Order::Ascending)
+        .collect::<StdResult<_>>()?;
+    Ok(GamesResponse { games: all })
+    // TODO: I want to do this without having to rely on .unwrap
+    // Is it possible to do this without an unwrap??
+}
+
+pub fn query_all_games(deps: Deps) -> StdResult<GamesResponse> {
+    let all = GAMES
+        .range(deps.storage, None, None, Order::Ascending)
+        .collect::<StdResult<Vec<_>>>()?;
+    Ok(GamesResponse { games: all })
 }
 
 #[cfg(test)]
@@ -122,17 +146,6 @@ mod tests {
         };
         let _res = execute(deps.as_mut(), mock_env(), start_info, msg);
 
-        let same_start_info = mock_info("creator", &coins(2, "token"));
-        let msg = ExecuteMsg::StartGame {
-            addr: String::from("different_opponent"),
-            first_move: GameMove::Scissors,
-        };
-        let res = execute(deps.as_mut(), mock_env(), same_start_info, msg);
-        match res {
-            Err(ContractError::GameInProgress) => {}
-            _ => panic!("Must return ContractError::GameInProgress"),
-        }
-
         // Start a new game from different address
         let diff_start_info = mock_info("someone_else", &coins(2, "token"));
         let msg = ExecuteMsg::StartGame {
@@ -144,5 +157,110 @@ mod tests {
             Err(ContractError::GameInProgress) => panic!("Should let second game start"),
             _ => {}
         }
+    }
+
+    #[test]
+    fn start_two_games_same_host_and_opponent() {
+        let mut deps = mock_dependencies(&coins(2, "token"));
+
+        let msg = InstantiateMsg {};
+        let info = mock_info("creator", &coins(2, "token"));
+        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Start first game
+        let start_info = mock_info("creator", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: String::from("an_opponent"),
+            first_move: GameMove::Scissors,
+        };
+        let _res = execute(deps.as_mut(), mock_env(), start_info, msg);
+
+        let same_start_info = mock_info("creator", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: String::from("an_opponent"),
+            first_move: GameMove::Scissors,
+        };
+        let res = execute(deps.as_mut(), mock_env(), same_start_info, msg);
+        match res {
+            Err(ContractError::GameInProgress) => {}
+            _ => panic!("Must return ContractError::GameInProgress"),
+        }
+    }
+
+    #[test]
+    fn start_two_games_one_host_different_opponents() {
+        let mut deps = mock_dependencies(&coins(2, "token"));
+
+        let msg = InstantiateMsg {};
+        let info = mock_info("creator", &coins(2, "token"));
+        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Start first game
+        let start_info = mock_info("creator", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: String::from("an_opponent"),
+            first_move: GameMove::Scissors,
+        };
+        let _res = execute(deps.as_mut(), mock_env(), start_info, msg);
+
+        let same_start_info = mock_info("creator", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: String::from("different_opponent"),
+            first_move: GameMove::Scissors,
+        };
+        let res = execute(deps.as_mut(), mock_env(), same_start_info, msg);
+        match res {
+            Err(ContractError::GameInProgress) => panic!("Second game should start"),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn test_query_games() {
+        let mut deps = mock_dependencies(&coins(2, "token"));
+
+        let msg = InstantiateMsg {};
+        let info = mock_info("creator", &coins(2, "token"));
+        let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Start a game
+        let start_info = mock_info("creator", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: String::from("an_opponent"),
+            first_move: GameMove::Scissors,
+        };
+        let _res = execute(deps.as_mut(), mock_env(), start_info, msg);
+
+        // Start another game with same host
+        let same_start_info = mock_info("creator", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: "diff_opponent".to_string(),
+            first_move: GameMove::Rock,
+        };
+        let _res = execute(deps.as_mut(), mock_env(), same_start_info, msg);
+
+        // Start another game with different host
+        let same_start_info = mock_info("user", &coins(2, "token"));
+        let msg = ExecuteMsg::StartGame {
+            addr: "diff_opponent".to_string(),
+            first_move: GameMove::Rock,
+        };
+        let _res = execute(deps.as_mut(), mock_env(), same_start_info, msg);
+
+        // Query all games
+        let msg = QueryMsg::QueryAllGames {};
+        let res = query(deps.as_ref(), mock_env(), msg).unwrap();
+        let value: GamesResponse = from_binary(&res).unwrap();
+        println!("{:?}", value.games);
+        assert_eq!(value.games.len(), 3);
+
+        // Query host games
+        let msg = QueryMsg::QueryHostGames {
+            addr: "creator".to_string(),
+        };
+        let res = query(deps.as_ref(), mock_env(), msg).unwrap();
+        let value: GamesResponse = from_binary(&res).unwrap();
+        assert_eq!(value.games.len(), 2);
+        // TODO: Assert that the value of value.games is the same as expected
     }
 }
